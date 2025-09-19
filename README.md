@@ -197,11 +197,16 @@ To change environment variables:
 
 | Variable | Description | Used by |
 |----------|-------------|---------|
-| `TELEGRAM_BOT_TOKEN` | Telegram bot token | telegram-bot |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token (Prod: `8333194739:AAGNb5E4NwwmdP7rhYQlvR6jrTBsS87H9W8`) | telegram-bot |
 | `JWT_SECRET` | Secret for JWT tokens | api-server |
 | `API_SECRET_KEY` | API authentication key | api-server |
 | `TELEGRAM_WEBHOOK_SECRET` | Webhook secret | api-server, telegram-bot |
 | `DATABASE_URL` | Database connection | api-server, telegram-bot |
+
+### 🛠️ Dev/Prod Separation
+
+**Production Bot (Cloud):** `8333194739:AAGNb5E4NwwmdP7rhYQlvR6jrTBsS87H9W8`  
+**Development Setup:** See [DEV_SETUP.md](DEV_SETUP.md) for local development configuration
 
 ### Security Recommendations
 
