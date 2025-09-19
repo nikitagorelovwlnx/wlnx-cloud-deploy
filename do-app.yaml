@@ -1,0 +1,123 @@
+# DigitalOcean App Platform Specification
+# Configuration for automatic deployment of WLNX projects
+name: wlnx
+region: fra
+alerts:
+  - rule: DEPLOYMENT_FAILED
+
+# Incoming traffic routing
+ingress:
+  rules:
+    # API requests
+    - component: 
+        name: api-server
+      match: 
+        path: 
+          prefix: /api
+    # Web panel (everything else)
+    - component: 
+        name: control-panel
+      match: 
+        path: 
+          prefix: /
+
+# PostgreSQL Database
+databases:
+  - name: pg
+    engine: PG
+    version: "15"
+    production: true             # For production; set false for development
+    cluster_name: wlnx-pg        # Name of the created DB cluster
+
+services:
+  # 1) API Server
+  - name: api-server
+    environment_slug: node-js
+    github:
+      repo: nikitagorelovwlnx/wlnx-api-server
+      branch: main
+      deploy_on_push: true
+    instance_size_slug: apps-s-1vcpu-1gb
+    instance_count: 2            # For fault tolerance
+    http_port: 8080              # Default port for Node.js
+    health_check:
+      http_path: /health
+      period_seconds: 10
+      failure_threshold: 3
+      timeout_seconds: 5
+    envs:
+      - key: NODE_ENV
+        value: production
+        scope: RUN_AND_BUILD_TIME
+      - key: PORT
+        value: "8080"
+        scope: RUN_TIME
+      - key: DATABASE_URL
+        type: GENERAL
+        value: ${pg.DATABASE_URL}  # Automatically passed from DB
+      - key: TELEGRAM_WEBHOOK_SECRET
+        type: SECRET
+        value: "<set_me>"
+      - key: JWT_SECRET
+        type: SECRET
+        value: "<set_me>"
+      - key: API_SECRET_KEY
+        type: SECRET
+        value: "<set_me>"
+
+  # 2) Control Panel (Web Dashboard)
+  - name: control-panel
+    environment_slug: node-js
+    github:
+      repo: nikitagorelovwlnx/wlnx-control-panel
+      branch: main
+      deploy_on_push: true
+    instance_size_slug: apps-s-1vcpu-1gb
+    instance_count: 1
+    http_port: 3000              # Standard port for React/Next.js
+    health_check:
+      http_path: /
+      period_seconds: 10
+      failure_threshold: 3
+      timeout_seconds: 5
+    envs:
+      - key: NODE_ENV
+        value: production
+        scope: RUN_AND_BUILD_TIME
+      - key: PORT
+        value: "3000"
+        scope: RUN_TIME
+      - key: REACT_APP_API_URL
+        value: ${api-server.PUBLIC_URL}/api
+        scope: BUILD_TIME
+      - key: API_BASE_URL
+        value: ${api-server.PUBLIC_URL}/api
+        scope: RUN_TIME
+
+workers:
+  # 3) Telegram Bot (background worker)
+  - name: telegram-bot
+    environment_slug: node-js
+    github:
+      repo: nikitagorelovwlnx/wlnx-telegram-bot
+      branch: main
+      deploy_on_push: true
+    run_command: npm start       # Bot startup command
+    instance_size_slug: apps-s-1vcpu-1gb
+    instance_count: 1
+    envs:
+      - key: NODE_ENV
+        value: production
+        scope: RUN_AND_BUILD_TIME
+      - key: DATABASE_URL
+        type: GENERAL
+        value: ${pg.DATABASE_URL}
+      - key: TELEGRAM_BOT_TOKEN
+        type: SECRET
+        value: "<set_me>"
+      - key: API_BASE_URL
+        value: ${api-server.PUBLIC_URL}/api
+        scope: RUN_TIME
+      - key: WEBHOOK_URL
+        value: ${api-server.PUBLIC_URL}/api/webhook/telegram
+        scope: RUN_TIME

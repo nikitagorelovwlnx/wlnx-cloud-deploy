@@ -1,0 +1,274 @@
+name: 🚀 Deploy WLNX to DigitalOcean
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'do-app.yaml'
+      - 'environments/**'
+      - '.github/workflows/deploy.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'do-app.yaml'
+      - 'environments/**'
+
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - development
+          - production
+      force_recreate:
+        description: 'Force recreate app (delete and create new)'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+jobs:
+  validate:
+    name: 🔍 Validate Configuration
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install doctl
+      uses: digitalocean/action-doctl@v2
+      with:
+        token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+        
+    - name: Validate app specs
+      run: |
+        echo "🔍 Validating main app spec..."
+        doctl apps spec validate --spec do-app.yaml
+        
+        echo "🔍 Validating development spec..."
+        doctl apps spec validate --spec environments/development.yaml
+        
+        echo "🔍 Validating production spec..."
+        doctl apps spec validate --spec environments/production.yaml
+        
+        echo "✅ All configurations are valid!"
+
+  deploy-development:
+    name: 🔧 Deploy to Development
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'development')
+    environment: development
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install doctl
+      uses: digitalocean/action-doctl@v2
+      with:
+        token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+        
+    - name: Deploy to Development
+      run: |
+        echo "🔧 Deploying to Development environment..."
+        
+        # Check if app exists
+        if doctl apps list --format ID,Name --no-header | grep -q "wlnx-dev"; then
+          echo "📝 Updating existing development app..."
+          APP_ID=$(doctl apps list --format ID,Name --no-header | grep "wlnx-dev" | cut -f1)
+          doctl apps update "$APP_ID" --spec environments/development.yaml
+        else
+          echo "🆕 Creating new development app..."
+          APP_ID=$(doctl apps create --spec environments/development.yaml --format ID --no-header)
+        fi
+        
+        echo "APP_ID=$APP_ID" >> $GITHUB_ENV
+        echo "🎉 Development deployment completed! App ID: $APP_ID"
+        
+    - name: Wait for deployment
+      run: |
+        echo "⏳ Waiting for deployment to complete..."
+        timeout 600 bash -c '
+          while true; do
+            STATUS=$(doctl apps list-deployments "$APP_ID" --format Phase --no-header | head -1)
+            echo "Current status: $STATUS"
+            
+            case "$STATUS" in
+              "ACTIVE")
+                echo "✅ Deployment completed successfully!"
+                exit 0
+                ;;
+              "ERROR"|"CANCELED")
+                echo "❌ Deployment failed!"
+                doctl apps logs "$APP_ID" api-server --type build
+                exit 1
+                ;;
+              *)
+                echo "⏳ Still deploying... (Status: $STATUS)"
+                sleep 30
+                ;;
+            esac
+          done
+        '
+
+  deploy-production:
+    name: 🚀 Deploy to Production
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
+    environment: production
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install doctl
+      uses: digitalocean/action-doctl@v2
+      with:
+        token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+        
+    - name: Deploy to Production
+      run: |
+        echo "🚀 Deploying to Production environment..."
+        
+        if [ "${{ github.event.inputs.force_recreate }}" == "true" ]; then
+          echo "🗑️ Force recreating app..."
+          if doctl apps list --format ID,Name --no-header | grep -q "wlnx-prod"; then
+            APP_ID=$(doctl apps list --format ID,Name --no-header | grep "wlnx-prod" | cut -f1)
+            doctl apps delete "$APP_ID" --force
+            echo "⏳ Waiting for app deletion..."
+            sleep 30
+          fi
+          echo "🆕 Creating new production app..."
+          APP_ID=$(doctl apps create --spec environments/production.yaml --format ID --no-header)
+        else
+          # Check if app exists
+          if doctl apps list --format ID,Name --no-header | grep -q "wlnx-prod"; then
+            echo "📝 Updating existing production app..."
+            APP_ID=$(doctl apps list --format ID,Name --no-header | grep "wlnx-prod" | cut -f1)
+            doctl apps update "$APP_ID" --spec environments/production.yaml
+          else
+            echo "🆕 Creating new production app..."
+            APP_ID=$(doctl apps create --spec environments/production.yaml --format ID --no-header)
+          fi
+        fi
+        
+        echo "APP_ID=$APP_ID" >> $GITHUB_ENV
+        echo "🎉 Production deployment started! App ID: $APP_ID"
+        
+    - name: Wait for deployment
+      run: |
+        echo "⏳ Waiting for production deployment to complete..."
+        timeout 900 bash -c '
+          while true; do
+            STATUS=$(doctl apps list-deployments "$APP_ID" --format Phase --no-header | head -1)
+            echo "Current status: $STATUS"
+            
+            case "$STATUS" in
+              "ACTIVE")
+                echo "✅ Production deployment completed successfully!"
+                APP_URL=$(doctl apps get "$APP_ID" --format LiveURL --no-header)
+                echo "🌐 App URL: $APP_URL"
+                exit 0
+                ;;
+              "ERROR"|"CANCELED")
+                echo "❌ Production deployment failed!"
+                doctl apps logs "$APP_ID" api-server --type build
+                exit 1
+                ;;
+              *)
+                echo "⏳ Still deploying... (Status: $STATUS)"
+                sleep 45
+                ;;
+            esac
+          done
+        '
+
+  health-check:
+    name: 🩺 Health Check
+    runs-on: ubuntu-latest
+    needs: [deploy-production]
+    if: always() && needs.deploy-production.result == 'success'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install doctl
+      uses: digitalocean/action-doctl@v2
+      with:
+        token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+        
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y jq curl bc
+        
+    - name: Wait for app to be ready
+      run: |
+        echo "⏳ Waiting for app to be fully ready..."
+        sleep 60
+        
+    - name: Get app URL
+      run: |
+        APP_ID=$(doctl apps list --format ID,Name --no-header | grep "wlnx-prod" | cut -f1)
+        APP_URL=$(doctl apps get "$APP_ID" --format LiveURL --no-header)
+        echo "APP_URL=$APP_URL" >> $GITHUB_ENV
+        echo "🌐 Testing app at: $APP_URL"
+        
+    - name: Basic health checks
+      run: |
+        echo "🔍 Running basic health checks..."
+        
+        # Check if main page loads
+        if curl -s -f "$APP_URL" > /dev/null; then
+          echo "✅ Main page is accessible"
+        else
+          echo "❌ Main page is not accessible"
+          exit 1
+        fi
+        
+        # Check API health endpoint
+        if curl -s -f "$APP_URL/api/health" > /dev/null; then
+          echo "✅ API health endpoint is working"
+        else
+          echo "❌ API health endpoint is not working"
+          exit 1
+        fi
+        
+        # Check response time
+        response_time=$(curl -s -w "%{time_total}" -o /dev/null "$APP_URL/api/health")
+        if (( $(echo "$response_time < 5.0" | bc -l) )); then
+          echo "✅ Response time is acceptable: ${response_time}s"
+        else
+          echo "⚠️ Response time is slow: ${response_time}s"
+        fi
+        
+        echo "🎉 All basic health checks passed!"
+
+  notify:
+    name: 📢 Notify
+    runs-on: ubuntu-latest
+    needs: [deploy-production, health-check]
+    if: always()
+    
+    steps:
+    - name: Notify on success
+      if: needs.deploy-production.result == 'success' && needs.health-check.result == 'success'
+      run: |
+        echo "🎉 WLNX successfully deployed to production!"
+        echo "✅ All health checks passed"
+        
+    - name: Notify on failure
+      if: needs.deploy-production.result == 'failure' || needs.health-check.result == 'failure'
+      run: |
+        echo "❌ WLNX deployment failed!"
+        echo "Please check the logs and take necessary actions"
+        exit 1

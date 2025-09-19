@@ -1,0 +1,191 @@
+# DigitalOcean App Platform Configuration - Production Environment
+# Optimized configuration for production (high availability)
+
+name: wlnx-prod
+region: fra
+alerts:
+  - rule: DEPLOYMENT_FAILED
+  - rule: DOMAIN_FAILED
+  - rule: BUILD_FAILED
+  - rule: CPU_UTILIZATION
+    spec:
+      operator: GREATER_THAN
+      value: 80
+      window: FIVE_MINUTES
+  - rule: MEM_UTILIZATION
+    spec:
+      operator: GREATER_THAN
+      value: 85
+      window: FIVE_MINUTES
+
+# Incoming traffic routing
+ingress:
+  rules:
+    - component: 
+        name: api-server
+      match: 
+        path: 
+          prefix: /api
+    - component: 
+        name: control-panel
+      match: 
+        path: 
+          prefix: /
+
+# PostgreSQL Database (production cluster)
+databases:
+  - name: pg
+    engine: PG
+    version: "15"
+    production: true             # Production database
+    cluster_name: wlnx-pg-prod   # Production cluster name
+
+services:
+  # 1) API Server (high availability)
+  - name: api-server
+    environment_slug: node-js
+    github:
+      repo: nikitagorelovwlnx/wlnx-api-server
+      branch: main               # Stable branch
+      deploy_on_push: true
+    instance_size_slug: apps-s-2vcpu-2gb    # More resources
+    instance_count: 3            # High availability
+    http_port: 8080
+    health_check:
+      http_path: /health
+      period_seconds: 10
+      failure_threshold: 2       # Fast problem detection
+      timeout_seconds: 5
+      success_threshold: 2
+    # Auto-scaling
+    autoscaling:
+      min_instance_count: 2
+      max_instance_count: 5
+      metrics:
+        cpu:
+          percent: 70
+    envs:
+      - key: NODE_ENV
+        value: production
+        scope: RUN_AND_BUILD_TIME
+      - key: PORT
+        value: "8080"
+        scope: RUN_TIME
+      - key: DATABASE_URL
+        type: GENERAL
+        value: ${pg.DATABASE_URL}
+      - key: TELEGRAM_WEBHOOK_SECRET
+        type: SECRET
+        value: "<set_me>"
+      - key: JWT_SECRET
+        type: SECRET
+        value: "<set_me>"
+      - key: API_SECRET_KEY
+        type: SECRET
+        value: "<set_me>"
+      - key: LOG_LEVEL
+        value: info               # Moderate logging
+        scope: RUN_TIME
+      - key: RATE_LIMIT_WINDOW_MS
+        value: "900000"           # 15 minutes
+        scope: RUN_TIME
+      - key: RATE_LIMIT_MAX_REQUESTS
+        value: "1000"             # Request limit
+        scope: RUN_TIME
+      - key: CORS_ORIGIN
+        value: ${control-panel.PUBLIC_URL}
+        scope: RUN_TIME
+
+  # 2) Control Panel (production mode)
+  - name: control-panel
+    environment_slug: node-js
+    github:
+      repo: nikitagorelovwlnx/wlnx-control-panel
+      branch: main               # Stable branch
+      deploy_on_push: true
+    instance_size_slug: apps-s-1vcpu-2gb
+    instance_count: 2            # Redundancy
+    http_port: 3000
+    health_check:
+      http_path: /
+      period_seconds: 10
+      failure_threshold: 2
+      timeout_seconds: 5
+      success_threshold: 2
+    envs:
+      - key: NODE_ENV
+        value: production
+        scope: RUN_AND_BUILD_TIME
+      - key: PORT
+        value: "3000"
+        scope: RUN_TIME
+      - key: REACT_APP_API_URL
+        value: ${api-server.PUBLIC_URL}/api
+        scope: BUILD_TIME
+      - key: API_BASE_URL
+        value: ${api-server.PUBLIC_URL}/api
+        scope: RUN_TIME
+      - key: GENERATE_SOURCEMAP
+        value: "false"            # Don't generate sourcemap for production
+        scope: BUILD_TIME
+      - key: REACT_APP_SENTRY_DSN
+        type: SECRET
+        value: "<set_me_if_using_sentry>"
+        scope: BUILD_TIME
+
+workers:
+  # 3) Telegram Bot (stable operation)
+  - name: telegram-bot
+    environment_slug: node-js
+    github:
+      repo: nikitagorelovwlnx/wlnx-telegram-bot
+      branch: main               # Stable branch
+      deploy_on_push: true
+    run_command: npm start       # Production command
+    instance_size_slug: apps-s-1vcpu-1gb
+    instance_count: 2            # Worker redundancy
+    envs:
+      - key: NODE_ENV
+        value: production
+        scope: RUN_AND_BUILD_TIME
+      - key: DATABASE_URL
+        type: GENERAL
+        value: ${pg.DATABASE_URL}
+      - key: TELEGRAM_BOT_TOKEN
+        type: SECRET
+        value: "<set_me>"
+      - key: API_BASE_URL
+        value: ${api-server.PUBLIC_URL}/api
+        scope: RUN_TIME
+      - key: WEBHOOK_URL
+        value: ${api-server.PUBLIC_URL}/api/webhook/telegram
+        scope: RUN_TIME
+      - key: LOG_LEVEL
+        value: warn              # Only important logs
+        scope: RUN_TIME
+      - key: MAX_CONCURRENT_UPDATES
+        value: "100"              # Update processing limit
+        scope: RUN_TIME
+
+# Additional services for production
+static_sites:
+  # Static resources (if needed)
+  - name: assets
+    github:
+      repo: nikitagorelovwlnx/wlnx-assets  # If there's a separate assets repo
+      branch: main
+      deploy_on_push: true
+    output_dir: /build
+    
+functions:
+  # Serverless functions for special tasks
+  - name: analytics
+    github:
+      repo: nikitagorelovwlnx/wlnx-functions  # If there are serverless functions
+      branch: main
+      deploy_on_push: true
+    source_dir: /functions
+    envs:
+      - key: DATABASE_URL
+        type: GENERAL
+        value: ${pg.DATABASE_URL}

@@ -1,0 +1,274 @@
+name: 🩺 Daily Health Check
+
+on:
+  schedule:
+    # Каждый день в 9:00 UTC (12:00 MSK)
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to check'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - development
+          - production
+          - both
+
+env:
+  DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+jobs:
+  health-check:
+    name: 🩺 Health Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install doctl
+      uses: digitalocean/action-doctl@v2
+      with:
+        token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+        
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y jq curl bc openssl
+        
+    - name: Check Production Environment
+      if: github.event.inputs.environment == 'production' || github.event.inputs.environment == 'both' || github.event_name == 'schedule'
+      run: |
+        echo "🔍 Checking Production Environment..."
+        
+        # Get production app
+        if ! APP_ID=$(doctl apps list --format ID,Name --no-header | grep "wlnx-prod" | cut -f1); then
+          echo "❌ Production app not found"
+          exit 1
+        fi
+        
+        echo "📱 Production App ID: $APP_ID"
+        
+        # Check app status
+        APP_STATUS=$(doctl apps get "$APP_ID" --format Phase --no-header)
+        if [ "$APP_STATUS" != "ACTIVE" ]; then
+          echo "❌ Production app is not active: $APP_STATUS"
+          exit 1
+        fi
+        echo "✅ Production app is active"
+        
+        # Get app URL
+        APP_URL=$(doctl apps get "$APP_ID" --format LiveURL --no-header)
+        echo "🌐 Production URL: $APP_URL"
+        
+        # Check main page
+        if ! curl -s -f --max-time 10 "$APP_URL" > /dev/null; then
+          echo "❌ Production main page is not accessible"
+          exit 1
+        fi
+        echo "✅ Production main page is accessible"
+        
+        # Check API health
+        if ! curl -s -f --max-time 10 "$APP_URL/api/health" > /dev/null; then
+          echo "❌ Production API health endpoint failed"
+          exit 1
+        fi
+        echo "✅ Production API health endpoint is working"
+        
+        # Check SSL certificate
+        DOMAIN=$(echo "$APP_URL" | sed 's|https\?://||' | sed 's|/.*||')
+        CERT_EXPIRY=$(echo | openssl s_client -servername "$DOMAIN" -connect "$DOMAIN:443" 2>/dev/null | openssl x509 -noout -dates | grep notAfter | cut -d= -f2)
+        echo "🔒 SSL certificate expires: $CERT_EXPIRY"
+        
+        # Check response time
+        RESPONSE_TIME=$(curl -s -w "%{time_total}" -o /dev/null --max-time 30 "$APP_URL/api/health")
+        echo "⏱️ API response time: ${RESPONSE_TIME}s"
+        
+        if (( $(echo "$RESPONSE_TIME > 5.0" | bc -l) )); then
+          echo "⚠️ Warning: Slow response time"
+        fi
+        
+        echo "🎉 Production environment health check completed"
+        
+    - name: Check Development Environment
+      if: github.event.inputs.environment == 'development' || github.event.inputs.environment == 'both'
+      run: |
+        echo "🔍 Checking Development Environment..."
+        
+        # Get development app
+        if ! APP_ID=$(doctl apps list --format ID,Name --no-header | grep "wlnx-dev" | cut -f1); then
+          echo "⚠️ Development app not found (this is OK)"
+          exit 0
+        fi
+        
+        echo "📱 Development App ID: $APP_ID"
+        
+        # Check app status
+        APP_STATUS=$(doctl apps get "$APP_ID" --format Phase --no-header)
+        if [ "$APP_STATUS" != "ACTIVE" ]; then
+          echo "⚠️ Development app is not active: $APP_STATUS"
+          exit 0
+        fi
+        echo "✅ Development app is active"
+        
+        # Get app URL
+        APP_URL=$(doctl apps get "$APP_ID" --format LiveURL --no-header)
+        echo "🌐 Development URL: $APP_URL"
+        
+        # Check main page
+        if curl -s -f --max-time 10 "$APP_URL" > /dev/null; then
+          echo "✅ Development main page is accessible"
+        else
+          echo "⚠️ Development main page is not accessible"
+        fi
+        
+        # Check API health
+        if curl -s -f --max-time 10 "$APP_URL/api/health" > /dev/null; then
+          echo "✅ Development API health endpoint is working"
+        else
+          echo "⚠️ Development API health endpoint failed"
+        fi
+        
+        echo "🎉 Development environment health check completed"
+
+  database-check:
+    name: 🗄️ Database Health Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Install doctl
+      uses: digitalocean/action-doctl@v2
+      with:
+        token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+        
+    - name: Check Database Health
+      run: |
+        echo "🗄️ Checking Database Health..."
+        
+        # List all WLNX databases
+        DB_LIST=$(doctl databases list --format Name,Status,Engine,Size --no-header | grep wlnx || true)
+        
+        if [ -z "$DB_LIST" ]; then
+          echo "⚠️ No WLNX databases found"
+          exit 0
+        fi
+        
+        echo "📊 Found databases:"
+        echo "$DB_LIST"
+        
+        # Check each database status
+        while IFS=$'\t' read -r name status engine size; do
+          echo "🔍 Checking database: $name"
+          
+          if [ "$status" = "online" ]; then
+            echo "✅ Database $name is online ($engine, $size)"
+          else
+            echo "❌ Database $name is not online: $status"
+            exit 1
+          fi
+          
+          # Get database metrics if available
+          DB_METRICS=$(doctl databases get "$name" --format Name,Status,CreatedAt,Users,DBs || true)
+          if [ -n "$DB_METRICS" ]; then
+            echo "📈 Database info: $DB_METRICS"
+          fi
+          
+        done <<< "$DB_LIST"
+        
+        echo "🎉 Database health check completed"
+
+  performance-check:
+    name: 📊 Performance Check
+    runs-on: ubuntu-latest
+    needs: health-check
+    
+    steps:
+    - name: Install doctl
+      uses: digitalocean/action-doctl@v2
+      with:
+        token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+        
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y curl bc
+        
+    - name: Performance Test
+      run: |
+        echo "📊 Running performance tests..."
+        
+        # Get production app URL
+        if ! APP_ID=$(doctl apps list --format ID,Name --no-header | grep "wlnx-prod" | cut -f1); then
+          echo "❌ Production app not found"
+          exit 1
+        fi
+        
+        APP_URL=$(doctl apps get "$APP_ID" --format LiveURL --no-header)
+        
+        # Multiple requests to check consistency
+        echo "🔄 Testing multiple requests..."
+        TOTAL_TIME=0
+        REQUESTS=5
+        
+        for i in $(seq 1 $REQUESTS); do
+          RESPONSE_TIME=$(curl -s -w "%{time_total}" -o /dev/null --max-time 30 "$APP_URL/api/health")
+          echo "Request $i: ${RESPONSE_TIME}s"
+          TOTAL_TIME=$(echo "$TOTAL_TIME + $RESPONSE_TIME" | bc)
+        done
+        
+        AVG_TIME=$(echo "scale=3; $TOTAL_TIME / $REQUESTS" | bc)
+        echo "📈 Average response time: ${AVG_TIME}s"
+        
+        # Check if average time is acceptable
+        if (( $(echo "$AVG_TIME < 2.0" | bc -l) )); then
+          echo "✅ Performance is excellent"
+        elif (( $(echo "$AVG_TIME < 5.0" | bc -l) )); then
+          echo "✅ Performance is acceptable"
+        else
+          echo "⚠️ Performance might need attention"
+        fi
+
+  summary:
+    name: 📋 Summary Report
+    runs-on: ubuntu-latest
+    needs: [health-check, database-check, performance-check]
+    if: always()
+    
+    steps:
+    - name: Generate Summary
+      run: |
+        echo "📋 WLNX Health Check Summary"
+        echo "=========================="
+        echo "🕐 Check completed at: $(date)"
+        echo ""
+        
+        if [ "${{ needs.health-check.result }}" = "success" ]; then
+          echo "✅ Application Health: PASSED"
+        else
+          echo "❌ Application Health: FAILED"
+        fi
+        
+        if [ "${{ needs.database-check.result }}" = "success" ]; then
+          echo "✅ Database Health: PASSED"
+        else
+          echo "❌ Database Health: FAILED"
+        fi
+        
+        if [ "${{ needs.performance-check.result }}" = "success" ]; then
+          echo "✅ Performance Check: PASSED"
+        else
+          echo "❌ Performance Check: FAILED"
+        fi
+        
+        echo ""
+        if [ "${{ needs.health-check.result }}" = "success" ] && 
+           [ "${{ needs.database-check.result }}" = "success" ] && 
+           [ "${{ needs.performance-check.result }}" = "success" ]; then
+          echo "🎉 Overall Status: ALL SYSTEMS OPERATIONAL"
+        else
+          echo "⚠️ Overall Status: ISSUES DETECTED"
+          echo "Please review the logs and take necessary actions"
+          exit 1
+        fi

@@ -1,0 +1,131 @@
+# DigitalOcean App Platform Configuration - Development Environment
+# Optimized configuration for development (fewer resources, cost savings)
+
+name: wlnx-dev
+region: fra
+alerts:
+  - rule: DEPLOYMENT_FAILED
+
+# Incoming traffic routing
+ingress:
+  rules:
+    - component: 
+        name: api-server
+      match: 
+        path: 
+          prefix: /api
+    - component: 
+        name: control-panel
+      match: 
+        path: 
+          prefix: /
+
+# PostgreSQL Database (dev mode - cheaper)
+databases:
+  - name: pg
+    engine: PG
+    version: "15"
+    production: false            # Dev database (cheaper)
+    # cluster_name not specified - dev DB will be created
+
+services:
+  # 1) API Server (minimal resources)
+  - name: api-server
+    environment_slug: node-js
+    github:
+      repo: nikitagorelovwlnx/wlnx-api-server
+      branch: develop            # Development branch
+      deploy_on_push: true
+    instance_size_slug: apps-s-1vcpu-512mb  # Fewer resources
+    instance_count: 1            # Single instance for cost savings
+    http_port: 8080
+    health_check:
+      http_path: /health
+      period_seconds: 30         # Less frequent checks
+      failure_threshold: 5       # More tolerance for errors
+      timeout_seconds: 10
+    envs:
+      - key: NODE_ENV
+        value: development
+        scope: RUN_AND_BUILD_TIME
+      - key: PORT
+        value: "8080"
+        scope: RUN_TIME
+      - key: DATABASE_URL
+        type: GENERAL
+        value: ${pg.DATABASE_URL}
+      - key: TELEGRAM_WEBHOOK_SECRET
+        type: SECRET
+        value: "<set_me>"
+      - key: JWT_SECRET
+        type: SECRET
+        value: "<set_me>"
+      - key: API_SECRET_KEY
+        type: SECRET
+        value: "<set_me>"
+      - key: LOG_LEVEL
+        value: debug              # More logs for development
+        scope: RUN_TIME
+
+  # 2) Control Panel (dev mode)
+  - name: control-panel
+    environment_slug: node-js
+    github:
+      repo: nikitagorelovwlnx/wlnx-control-panel
+      branch: develop            # Development branch
+      deploy_on_push: true
+    instance_size_slug: apps-s-1vcpu-512mb  # Fewer resources
+    instance_count: 1
+    http_port: 3000
+    health_check:
+      http_path: /
+      period_seconds: 30
+      failure_threshold: 5
+      timeout_seconds: 10
+    envs:
+      - key: NODE_ENV
+        value: development
+        scope: RUN_AND_BUILD_TIME
+      - key: PORT
+        value: "3000"
+        scope: RUN_TIME
+      - key: REACT_APP_API_URL
+        value: ${api-server.PUBLIC_URL}/api
+        scope: BUILD_TIME
+      - key: API_BASE_URL
+        value: ${api-server.PUBLIC_URL}/api
+        scope: RUN_TIME
+      - key: REACT_APP_DEBUG
+        value: "true"             # Debug mode
+        scope: BUILD_TIME
+
+workers:
+  # 3) Telegram Bot (dev mode)
+  - name: telegram-bot
+    environment_slug: node-js
+    github:
+      repo: nikitagorelovwlnx/wlnx-telegram-bot
+      branch: develop            # Development branch
+      deploy_on_push: true
+    run_command: npm run dev     # Dev startup command
+    instance_size_slug: apps-s-1vcpu-512mb  # Fewer resources
+    instance_count: 1
+    envs:
+      - key: NODE_ENV
+        value: development
+        scope: RUN_AND_BUILD_TIME
+      - key: DATABASE_URL
+        type: GENERAL
+        value: ${pg.DATABASE_URL}
+      - key: TELEGRAM_BOT_TOKEN
+        type: SECRET
+        value: "<set_me>"
+      - key: API_BASE_URL
+        value: ${api-server.PUBLIC_URL}/api
+        scope: RUN_TIME
+      - key: WEBHOOK_URL
+        value: ${api-server.PUBLIC_URL}/api/webhook/telegram
+        scope: RUN_TIME
+      - key: LOG_LEVEL
+        value: debug              # More logs
+        scope: RUN_TIME

@@ -1,0 +1,42 @@
+{
+  "name": "wlnx-cloud-deploy",
+  "version": "1.0.0",
+  "description": "Infrastructure as Code for WLNX applications deployment on DigitalOcean App Platform",
+  "main": "index.js",
+  "scripts": {
+    "deploy": "./scripts/deploy.sh",
+    "rollback": "./scripts/rollback.sh",
+    "status": "./scripts/manage.sh status",
+    "logs": "./scripts/manage.sh logs",
+    "scale": "./scripts/manage.sh scale",
+    "backup": "./scripts/manage.sh backup",
+    "validate": "doctl apps spec validate --spec do-app.yaml",
+    "setup": "cp .env.template .env && echo 'Please edit .env file with your values'"
+  },
+  "keywords": [
+    "digitalocean",
+    "app-platform",
+    "infrastructure",
+    "deployment",
+    "devops",
+    "telegram-bot",
+    "nodejs",
+    "typescript"
+  ],
+  "author": "Nikita Gorelov",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nikitagorelovwlnx/wlnx-cloud-deploy.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nikitagorelovwlnx/wlnx-cloud-deploy/issues"
+  },
+  "homepage": "https://github.com/nikitagorelovwlnx/wlnx-cloud-deploy#readme",
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "devDependencies": {
+    "yaml-lint": "^1.7.0"
+  }
+}
