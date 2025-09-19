@@ -205,7 +205,7 @@ To change environment variables:
 
 ### 🛠️ Dev/Prod Separation
 
-**Production Bot (Cloud):** `8333194739:AAGNb5E4NwwmdP7rhYQlvR6jrTBsS87H9W8`  
+**Production Bot (Cloud):** @wlnx_prod_bot (`8333194739:AAGNb5E4NwwmdP7rhYQlvR6jrTBsS87H9W8`)  
 **Development Setup:** See [DEV_SETUP.md](DEV_SETUP.md) for local development configuration
 
 ### Security Recommendations

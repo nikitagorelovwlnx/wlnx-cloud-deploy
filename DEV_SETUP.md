@@ -3,6 +3,7 @@
 ## 🤖 Telegram Bot Dev/Prod Separation
 
 ### **Production Bot (Cloud):**
+- **Bot**: @wlnx_prod_bot
 - **Token**: `8333194739:AAGNb5E4NwwmdP7rhYQlvR6jrTBsS87H9W8`
 - **Environment**: DigitalOcean App Platform
 - **Mode**: Production mode
