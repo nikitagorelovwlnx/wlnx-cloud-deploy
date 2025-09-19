@@ -21,13 +21,13 @@ ingress:
         path: 
           prefix: /
 
-# PostgreSQL Database
+# PostgreSQL Database (minimal setup for low traffic)
 databases:
   - name: pg
     engine: PG
     version: "15"
-    production: true             # For production; set false for development
-    cluster_name: wlnx-pg        # Name of the created DB cluster
+    production: false            # Dev DB for cost savings with low traffic
+    # No cluster_name - will create smaller dev database
 
 services:
   # 1) API Server
@@ -37,8 +37,8 @@ services:
       repo: nikitagorelovwlnx/wlnx-api-server
       branch: main
       deploy_on_push: true
-    instance_size_slug: apps-s-1vcpu-1gb
-    instance_count: 2            # For fault tolerance
+    instance_size_slug: apps-s-1vcpu-512mb
+    instance_count: 1            # Single instance sufficient for 10-100 bot users
     http_port: 8080              # Default port for Node.js
     health_check:
       http_path: /health
@@ -72,7 +72,7 @@ services:
       repo: nikitagorelovwlnx/wlnx-control-panel
       branch: main
       deploy_on_push: true
-    instance_size_slug: apps-s-1vcpu-1gb
+    instance_size_slug: apps-s-1vcpu-512mb
     instance_count: 1
     http_port: 3000              # Standard port for React/Next.js
     health_check:
@@ -103,7 +103,7 @@ workers:
       branch: main
       deploy_on_push: true
     run_command: npm start       # Bot startup command
-    instance_size_slug: apps-s-1vcpu-1gb
+    instance_size_slug: apps-s-1vcpu-512mb
     instance_count: 1
     envs:
       - key: NODE_ENV
