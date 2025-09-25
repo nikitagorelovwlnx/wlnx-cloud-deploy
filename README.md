@@ -1,6 +1,6 @@
 # 🚀 WLNX Cloud Deploy
 
-Infrastructure project for automatic deployment of WLNX applications on **DigitalOcean App Platform**.
+Infrastructure project for automatic deployment of WLNX applications on **Google Cloud Run**.
 
 ## 📋 Overview
 
@@ -24,8 +24,8 @@ This project contains all necessary configurations and scripts for deploying thr
          └───────────┬───────────┴───────────┬───────────┘
                      │                       │
             ┌─────────────────┐    ┌─────────────────┐
-            │  DigitalOcean   │    │   PostgreSQL    │
-            │  App Platform   │    │    Database     │
+            │  Google Cloud   │    │   Cloud SQL     │
+            │     Run         │    │   PostgreSQL    │
             │                 │    │                 │
             │ Auto HTTPS      │    │  Managed DB     │
             │ Load Balancer   │    │  Backups        │
@@ -35,36 +35,60 @@ This project contains all necessary configurations and scripts for deploying thr
 
 ## 🛠️ Prerequisites
 
-### 1. Install DigitalOcean CLI
+### 1. Install Google Cloud SDK
 
 ```bash
 # macOS
-brew install doctl
+brew install google-cloud-sdk
 
 # Linux
-curl -sL https://github.com/digitalocean/doctl/releases/download/v1.100.0/doctl-1.100.0-linux-amd64.tar.gz | tar -xzv
-sudo mv doctl /usr/local/bin
+curl https://sdk.cloud.google.com | bash
+exec -l $SHELL
 
 # Windows
-scoop install doctl
+# Download and install from: https://cloud.google.com/sdk/docs/install
 ```
 
-### 2. Setup Authentication
-
-1. Create a personal access token at [DigitalOcean](https://cloud.digitalocean.com/account/api/tokens)
-2. Run authentication:
+### 2. Install Docker
 
 ```bash
-doctl auth init
-# Insert your token
+# macOS
+brew install docker
+
+# Linux (Ubuntu/Debian)
+sudo apt-get update
+sudo apt-get install docker.io
+
+# Windows
+# Download Docker Desktop from: https://www.docker.com/products/docker-desktop
 ```
 
-### 3. Connect GitHub
+### 3. Setup Authentication
 
-Connect your GitHub account to DigitalOcean App Platform:
-1. Open [Apps in DigitalOcean](https://cloud.digitalocean.com/apps)
-2. Click "Create App" → "GitHub" → "Install and Authorize"
-3. Grant access to `wlnx-*` repositories
+1. Log in to Google Cloud:
+
+```bash
+gcloud auth login
+```
+
+2. Set your project:
+
+```bash
+gcloud config set project YOUR_PROJECT_ID
+```
+
+3. Enable required APIs:
+
+```bash
+gcloud services enable run.googleapis.com cloudbuild.googleapis.com containerregistry.googleapis.com
+```
+
+### 4. Setup Container Registry
+
+```bash
+# Configure Docker to use gcloud as credential helper
+gcloud auth configure-docker
+```
 
 ## 🚀 Quick Start
 
@@ -75,30 +99,33 @@ Connect your GitHub account to DigitalOcean App Platform:
 git clone <your-infrastructure-repo>
 cd wlnx-cloud-deploy
 
-# Copy environment variables template
-cp .env.template .env
-
-# Edit .env file
-nano .env
+# Update secrets in gcp-config/secrets.yaml with your actual values
+nano gcp-config/secrets.yaml
 ```
 
-### Step 2: Configure Environment Variables
+### Step 2: Configure Secrets
 
-Fill in the `.env` file:
+Update the secrets in `gcp-config/secrets.yaml`:
 
-```bash
-# Required variables
-TELEGRAM_BOT_TOKEN=your_bot_token_from_botfather
-JWT_SECRET=$(openssl rand -base64 32)
-API_SECRET_KEY=$(openssl rand -base64 32)
-TELEGRAM_WEBHOOK_SECRET=$(openssl rand -base64 32)
+```yaml
+# Generate secrets
+echo "JWT_SECRET=$(openssl rand -base64 32)"
+echo "API_SECRET_KEY=$(openssl rand -base64 32)"
+echo "TELEGRAM_WEBHOOK_SECRET=$(openssl rand -base64 32)"
+
+# Then edit gcp-config/secrets.yaml with these values
+# Also add your TELEGRAM_BOT_TOKEN and DATABASE_URL
 ```
 
 ### Step 3: Validate Configuration
 
 ```bash
-# Check configuration correctness
-doctl apps spec validate --spec do-app.yaml
+# Check that all required files exist
+ls gcp-config/
+ls docker/
+
+# Validate YAML syntax
+for file in gcp-config/*.yaml; do echo "Checking $file"; cat "$file" | python -c "import yaml,sys; yaml.safe_load(sys.stdin)"; done
 ```
 
 ### Step 4: Deploy
@@ -110,26 +137,32 @@ doctl apps spec validate --spec do-app.yaml
 
 The script will automatically:
 - ✅ Check dependencies and configuration
-- ✅ Create application in DigitalOcean
-- ✅ Setup PostgreSQL database
-- ✅ Deploy all three components
-- ✅ Configure domain and HTTPS
-- ✅ Show URL to access the application
+- ✅ Enable required Google Cloud services
+- ✅ Build and push Docker images
+- ✅ Deploy all three services to Cloud Run
+- ✅ Configure auto-scaling and HTTPS
+- ✅ Show URLs to access the services
 
 ## 📂 Project Structure
 
 ```
 wlnx-cloud-deploy/
-├── README.md                 # Project documentation
-├── do-app.yaml              # DigitalOcean App Platform specification
-├── .env.template            # Environment variables template
-├── .env                     # Environment variables (created locally)
-├── .app-id                  # Application ID (created after deploy)
-├── .gitignore              # Git ignore rules
-└── scripts/                # Automation scripts
-    ├── deploy.sh           # Deploy script
-    ├── rollback.sh         # Rollback script
-    └── manage.sh           # Management script
+├── README.md                        # Project documentation
+├── DEV_SETUP.md                    # Development setup guide
+├── .gitignore                      # Git ignore rules
+├── docker/                         # Docker configurations
+│   ├── api-server.Dockerfile      # API Server Docker image
+│   ├── control-panel.Dockerfile   # Control Panel Docker image
+│   └── telegram-bot.Dockerfile    # Telegram Bot Docker image
+├── gcp-config/                     # Google Cloud Run configurations
+│   ├── api-server-service.yaml    # API Server service definition
+│   ├── control-panel-service.yaml # Control Panel service definition
+│   ├── telegram-bot-service.yaml  # Telegram Bot service definition
+│   └── secrets.yaml               # Secrets configuration
+└── scripts/                        # Automation scripts
+    ├── deploy.sh                   # Deploy script
+    ├── rollback.sh                 # Rollback script
+    └── manage.sh                   # Management script
 ```
 
 ## 🔧 Application Management
@@ -137,49 +170,45 @@ wlnx-cloud-deploy/
 ### Monitor Status
 
 ```bash
-# Check application status
+# Check services status
 ./scripts/manage.sh status
 
 # View API server logs
-./scripts/manage.sh logs api-server run
+./scripts/manage.sh logs wlnx-api-server 100
 
-# View build logs
-./scripts/manage.sh logs control-panel build
+# View control panel logs
+./scripts/manage.sh logs wlnx-control-panel 50
 
 # View Telegram bot logs
-./scripts/manage.sh logs telegram-bot run
+./scripts/manage.sh logs wlnx-telegram-bot 100
 ```
 
 ### Scaling
 
 ```bash
-# Increase API server instances
-./scripts/manage.sh scale api-server 3
+# Scale API server (min 2, max 5 instances)
+./scripts/manage.sh scale wlnx-api-server 2 5
 
-# Show performance metrics
+# Show performance metrics URLs
 ./scripts/manage.sh metrics
 ```
 
 ### Version Rollback
 
 ```bash
-# Interactive version selection for rollback
-./scripts/rollback.sh
+# Restart a service (creates new revision)
+./scripts/manage.sh restart wlnx-api-server
 
-# Rollback to last successful version
-./scripts/rollback.sh last
-
-# Show available versions
-./scripts/rollback.sh list
-
-# Rollback to specific version
-./scripts/rollback.sh deployment_id_here
+# Restart all services
+for service in wlnx-api-server wlnx-control-panel wlnx-telegram-bot; do
+  ./scripts/manage.sh restart $service
+done
 ```
 
 ### Backup
 
 ```bash
-# Create database backup
+# Create Cloud SQL backup
 ./scripts/manage.sh backup
 ```
 
@@ -187,21 +216,20 @@ wlnx-cloud-deploy/
 
 To change environment variables:
 
-1. Edit `do-app.yaml`
-2. Update secrets in DigitalOcean web interface
-3. Run re-deploy: `./scripts/deploy.sh`
+1. Edit `gcp-config/secrets.yaml` for secret values
+2. Use management script: `./scripts/manage.sh env set wlnx-api-server KEY VALUE`
+3. Or update service directly: `gcloud run services update SERVICE --set-env-vars="KEY=VALUE"`
 
 ## 🔐 Security
 
 ### Environment Variables
 
 | Variable | Description | Used by |
-|----------|-------------|---------|
-| `TELEGRAM_BOT_TOKEN` | Telegram bot token (Prod: `8333194739:AAGNb5E4NwwmdP7rhYQlvR6jrTBsS87H9W8`) | telegram-bot |
-| `JWT_SECRET` | Secret for JWT tokens | api-server |
-| `API_SECRET_KEY` | API authentication key | api-server |
-| `TELEGRAM_WEBHOOK_SECRET` | Webhook secret | api-server, telegram-bot |
-| `DATABASE_URL` | Database connection | api-server, telegram-bot |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token | wlnx-telegram-bot |
+| `JWT_SECRET` | Secret for JWT tokens | wlnx-api-server |
+| `API_SECRET_KEY` | API authentication key | wlnx-api-server |
+| `TELEGRAM_WEBHOOK_SECRET` | Webhook secret | wlnx-api-server, wlnx-telegram-bot |
+| `DATABASE_URL` | Cloud SQL connection string | wlnx-api-server, wlnx-telegram-bot |
 
 ### 🛠️ Dev/Prod Separation
 
@@ -210,11 +238,12 @@ To change environment variables:
 
 ### Security Recommendations
 
-1. **Never commit `.env` files**
+1. **Never commit secrets to git**
 2. **Use long random strings for secrets**
 3. **Regularly rotate API keys**
-4. **Enable 2FA for DigitalOcean account**
+4. **Enable 2FA for Google Cloud account**
 5. **Use separate tokens for different environments**
+6. **Store secrets in Google Secret Manager for production**
 
 ## 🔄 CI/CD and Auto-deploy
 
@@ -228,12 +257,13 @@ The project is configured for automatic deployment when changes are made to `mai
 
 ## 📊 Monitoring and Logs
 
-### Built-in DigitalOcean Monitoring
+### Built-in Google Cloud Monitoring
 
-- **Performance metrics**: CPU, memory, network
-- **Real-time logs**: build, deploy, runtime
-- **Alerts**: deployment failure notifications
+- **Performance metrics**: CPU, memory, network, requests
+- **Real-time logs**: Cloud Logging integration
+- **Alerts**: Cloud Monitoring alerts
 - **Health checks**: automatic service monitoring
+- **Error reporting**: automatic error detection
 
 ### Access Metrics
 
@@ -241,95 +271,116 @@ The project is configured for automatic deployment when changes are made to `mai
 # Via CLI
 ./scripts/manage.sh metrics
 
-# Via web interface
-# https://cloud.digitalocean.com/apps/{app-id}/overview
+# Direct gcloud commands
+gcloud run services describe wlnx-api-server --region=europe-west1
+gcloud logging read "resource.type=cloud_run_revision" --limit=50
 ```
 
 ## 🌐 Domains and HTTPS
 
 ### Automatic Domains
 
-After deployment, the application automatically gets:
-- `https://wlnx-{random}.ondigitalocean.app` - main domain
-- Automatic SSL certificate
-- HTTP → HTTPS redirect
+After deployment, each service automatically gets:
+- `https://wlnx-api-server-{project-id}.a.run.app` - API Server
+- `https://wlnx-control-panel-{project-id}.a.run.app` - Control Panel
+- `https://wlnx-telegram-bot-{project-id}.a.run.app` - Telegram Bot
+- Automatic SSL certificates
+- HTTP/2 support
 
 ### Connect Custom Domain
 
-1. Open [application settings](https://cloud.digitalocean.com/apps)
-2. Go to "Settings" → "Domains"
-3. Add your domain
-4. Configure DNS records according to instructions
+```bash
+# Map custom domain to a service
+gcloud run domain-mappings create --service wlnx-control-panel --domain your-domain.com --region europe-west1
+
+# Update DNS records as shown in the output
+```
 
 ## 💰 Cost
 
-### Estimated Monthly Cost
+### Estimated Monthly Cost (Cheapest Configuration)
 
-| Component | Type | Cost |
-|-----------|------|------|
-| API Server (2x apps-s-1vcpu-1gb) | Service | $12/month |
-| Control Panel (1x apps-s-1vcpu-1gb) | Service | $6/month |
-| Telegram Bot (1x apps-s-1vcpu-1gb) | Worker | $6/month |
-| PostgreSQL (db-s-1vcpu-1gb) | Database | $15/month |
-| **Total** | | **~$39/month** |
+| Component | Type | Cost (estimate) |
+|-----------|------|----------------|
+| API Server (Cloud Run) | 0.5 CPU, 256Mi RAM | $2-5/month* |
+| Control Panel (Cloud Run) | 0.2 CPU, 128Mi RAM | $1-3/month* |
+| Telegram Bot (Cloud Run) | 0.2 CPU, 128Mi RAM | $1-2/month* |
+| Cloud SQL (db-f1-micro, HDD) | Database | $4/month |
+| Container Registry | Storage | $1-2/month |
+| **Total** | | **~$9-17/month** |
+
+*Based on usage (CPU time, requests, memory)
+*Scale to zero when not in use
 
 ### Cost Optimization
 
-- Use `production: false` for dev database
-- Reduce `instance_count` to 1 for development
-- Consider using `apps-s-1vcpu-512mb` for smaller workloads
+- Use `--min-instances=0` for development (scale to zero)
+- Use `db-f1-micro` tier for light workloads
+- Enable Cloud Run always-allocated CPU only for high-traffic services
+- Use `--concurrency=1000` to maximize instance utilization
 
 ## 🚨 Troubleshooting
 
 ### Common Issues
 
-#### 1. "GitHub repository not found" error
+#### 1. Docker build errors
 
 ```bash
-# Make sure repositories are public or access is granted
-# Check repository names in do-app.yaml are correct
+# Check Docker is running
+docker info
+
+# Verify Dockerfile syntax
+docker build -f docker/api-server.Dockerfile ../wlnx-api-server --no-cache
 ```
 
-#### 2. Node.js build error
+#### 2. Service deployment failures
 
 ```bash
-# Check build logs
-./scripts/manage.sh logs api-server build
+# Check service logs
+./scripts/manage.sh logs wlnx-api-server 100
 
-# Make sure package.json contains scripts: start
+# Verify service configuration
+gcloud run services describe wlnx-api-server --region=europe-west1
 ```
 
 #### 3. Database connection errors
 
 ```bash
-# Check DATABASE_URL variable is configured correctly
-# Make sure DB is created and accessible
-./scripts/manage.sh logs api-server run
+# Check Cloud SQL instance status
+gcloud sql instances list
+
+# Verify DATABASE_URL in secrets
+kubectl get secret wlnx-secrets -o yaml
+
+# Check service logs
+./scripts/manage.sh logs wlnx-api-server 50
 ```
 
 #### 4. Telegram bot not responding
 
 ```bash
-# Check bot logs
-./scripts/manage.sh logs telegram-bot run
+# Check bot service logs
+./scripts/manage.sh logs wlnx-telegram-bot 100
 
-# Make sure TELEGRAM_BOT_TOKEN is correct
-# Check webhook configuration
+# Verify webhook configuration
+curl -X POST "https://api.telegram.org/bot${TOKEN}/getWebhookInfo"
 ```
 
 ### Getting Support
 
-1. Check logs: `./scripts/manage.sh logs <component> <type>`
+1. Check logs: `./scripts/manage.sh logs <service> <lines>`
 2. Check status: `./scripts/manage.sh status`
-3. Check [DigitalOcean documentation](https://docs.digitalocean.com/products/app-platform/)
-4. Create an issue in this repository
+3. Check [Google Cloud Run documentation](https://cloud.google.com/run/docs)
+4. Use [Cloud Console](https://console.cloud.google.com) for detailed debugging
+5. Create an issue in this repository
 
 ## 📚 Additional Resources
 
-- [DigitalOcean App Platform Docs](https://docs.digitalocean.com/products/app-platform/)
-- [App Spec Reference](https://docs.digitalocean.com/products/app-platform/reference/app-spec/)
-- [doctl CLI Reference](https://docs.digitalocean.com/reference/doctl/)
-- [Node.js Best Practices for App Platform](https://docs.digitalocean.com/products/app-platform/languages-frameworks/nodejs/)
+- [Google Cloud Run Documentation](https://cloud.google.com/run/docs)
+- [Cloud Run Service YAML Reference](https://cloud.google.com/run/docs/reference/yaml/v1)
+- [gcloud CLI Reference](https://cloud.google.com/sdk/gcloud/reference/run)
+- [Container Runtime Best Practices](https://cloud.google.com/run/docs/tips/general)
+- [Cloud SQL for PostgreSQL](https://cloud.google.com/sql/docs/postgres)
 
 ## 🤝 Contributing
 
@@ -345,4 +396,17 @@ This project is distributed under the MIT License. See `LICENSE` file for detail
 
 ---
 
-**🎉 Ready to Deploy!** Run `./scripts/deploy.sh` to start deployment.
+## 🚀 Quick Deploy Command
+
+```bash
+# Set your Google Cloud project
+gcloud config set project YOUR_PROJECT_ID
+
+# Update secrets
+nano gcp-config/secrets.yaml
+
+# Deploy everything
+./scripts/deploy.sh
+```
+
+**🎉 Ready to Deploy!** Your WLNX application will be running on Google Cloud Run with automatic scaling and HTTPS!

@@ -5,7 +5,7 @@
 ### **Production Bot (Cloud):**
 - **Bot**: @wlnx_prod_bot
 - **Token**: `8333194739:AAGNb5E4NwwmdP7rhYQlvR6jrTBsS87H9W8`
-- **Environment**: DigitalOcean App Platform
+- **Environment**: Google Cloud Run
 - **Mode**: Production mode
 - **URL**: Connected to cloud API
 
@@ -31,7 +31,7 @@ Edit `.env` file:
 # Development Environment
 NODE_ENV=development
 TELEGRAM_BOT_TOKEN=YOUR_DEV_BOT_TOKEN_HERE
-API_BASE_URL=http://localhost:8080/api
+API_BASE_URL=http://localhost:3000/api
 DATABASE_URL=postgresql://localhost:5432/wlnx_dev
 ```
 
@@ -56,14 +56,14 @@ npm run dev
 
 **Development Bot (Local):**
 - Use for testing new features
-- Connects to local API (localhost:8080)
+- Connects to local API (localhost:3000)
 - Uses local database
 - Fast iteration
 
 **Production Bot (Cloud):**
 - Real users only
-- Connects to cloud API
-- Uses cloud database
+- Connects to Google Cloud Run API
+- Uses Google Cloud SQL database
 - Stable version
 
 #### 5. Deployment Process
@@ -71,7 +71,7 @@ npm run dev
 1. **Develop locally** with dev bot
 2. **Test thoroughly** 
 3. **Push to GitHub** when ready
-4. **Cloud auto-deploys** production bot
+4. **Deploy to Google Cloud Run** using deployment script
 5. **Production bot** serves real users
 
 ### **Benefits:**
@@ -84,11 +84,18 @@ npm run dev
 ### **Commands:**
 
 ```bash
-# Check production bot status
-doctl apps get 42f177fc-ad04-4d72-8ddc-d2fd6a4505dc
+# Check production services status
+gcloud run services list --region=europe-west1
 
 # View production logs
-doctl apps logs 42f177fc-ad04-4d72-8ddc-d2fd6a4505dc
+# API Server logs
+gcloud run services logs read wlnx-api-server --region=europe-west1
+
+# Telegram Bot logs  
+gcloud run services logs read wlnx-telegram-bot --region=europe-west1
+
+# Control Panel logs
+gcloud run services logs read wlnx-control-panel --region=europe-west1
 
 # Local development
 npm run dev  # Uses dev token from .env

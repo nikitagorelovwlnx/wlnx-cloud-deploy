@@ -1,204 +1,221 @@
-# 🚀 Пошаговое руководство по развёртыванию WLNX
+# 🚀 WLNX Deployment Guide
 
-Подробная инструкция по развёртыванию WLNX приложений в DigitalOcean App Platform.
+Comprehensive guide for deploying WLNX applications on Google Cloud Run.
 
-## 📋 Предварительные шаги
+## 📋 Prerequisites
 
-### 1. Подготовка DigitalOcean аккаунта
+### 1. Google Cloud Account Setup
 
-1. **Регистрация и верификация**
-   - Зарегистрируйтесь на [DigitalOcean](https://cloud.digitalocean.com)
-   - Подтвердите email
-   - Добавьте платёжный метод
+1. **Account Creation and Verification**
+   - Sign up at [Google Cloud Console](https://console.cloud.google.com)
+   - Verify your email address
+   - Add billing information
+   - Create a new project or select existing one
 
-2. **Создание персонального токена**
-   - Перейдите в [API & Tokens](https://cloud.digitalocean.com/account/api/tokens)
-   - Нажмите "Generate New Token"
-   - Имя: `WLNX Deploy Token`
-   - Права: Read + Write
-   - Скопируйте токен (он показывается только один раз!)
+2. **Enable Required APIs**
+   - Go to [APIs & Services](https://console.cloud.google.com/apis/dashboard)
+   - Enable the following APIs:
+     - Cloud Run API
+     - Cloud Build API
+     - Container Registry API
+     - Cloud SQL Admin API (if using Cloud SQL)
 
-### 2. Подключение GitHub
+### 2. Local Development Setup
 
-1. Откройте [Apps в DigitalOcean](https://cloud.digitalocean.com/apps)
-2. Нажмите "Create App"
-3. Выберите "GitHub"
-4. Нажмите "Install and Authorize DigitalOcean"
-5. Выберите организацию `nikitagorelovwlnx`
-6. Предоставьте доступ к репозиториям:
-   - `wlnx-api-server`
-   - `wlnx-telegram-bot`
-   - `wlnx-control-panel`
+1. **Install Google Cloud SDK**
+   ```bash
+   # macOS
+   brew install google-cloud-sdk
+   
+   # Linux
+   curl https://sdk.cloud.google.com | bash
+   exec -l $SHELL
+   
+   # Windows
+   # Download installer from: https://cloud.google.com/sdk/docs/install
+   ```
 
-### 3. Подготовка Telegram бота
+2. **Install Docker**
+   ```bash
+   # macOS
+   brew install docker
+   
+   # Linux (Ubuntu/Debian)
+   sudo apt-get update
+   sudo apt-get install docker.io
+   
+   # Windows
+   # Download Docker Desktop from: https://www.docker.com/products/docker-desktop
+   ```
 
-1. Откройте Telegram и найдите [@BotFather](https://t.me/botfather)
-2. Отправьте команду `/newbot`
-3. Следуйте инструкциям для создания бота:
-   - Имя бота: `WLNX Bot` (или своё)
-   - Username: `your_wlnx_bot` (должен заканчиваться на `bot`)
-4. Сохраните полученный **токен бота**
-5. Настройте бота:
+3. **Authenticate with Google Cloud**
+   ```bash
+   # Login to Google Cloud
+   gcloud auth login
+   
+   # Set your project
+   gcloud config set project YOUR_PROJECT_ID
+   
+   # Configure Docker for GCR
+   gcloud auth configure-docker
+   ```
+
+### 3. Telegram Bot Setup
+
+1. Open Telegram and find [@BotFather](https://t.me/botfather)
+2. Send `/newbot` command
+3. Follow the instructions to create your bot:
+   - Bot name: `WLNX Bot` (or your choice)
+   - Username: `your_wlnx_bot` (must end with `bot`)
+4. Save the **bot token** you receive
+5. Configure bot settings:
    ```
    /setdescription
-   Ваш личный помощник WLNX
+   Your personal WLNX assistant
    
    /setabouttext
-   Бот для управления WLNX системой
+   Bot for WLNX system management
    
    /setcommands
-   start - Начать работу с ботом
-   help - Получить справку
-   status - Статус системы
+   start - Start working with the bot
+   help - Get help information
+   status - System status
    ```
 
-## 🛠️ Установка и настройка
+## 🛠️ Installation and Setup
 
-### 1. Установка doctl (DigitalOcean CLI)
-
-**macOS:**
-```bash
-brew install doctl
-```
-
-**Linux (Ubuntu/Debian):**
-```bash
-cd ~
-curl -sL https://github.com/digitalocean/doctl/releases/download/v1.100.0/doctl-1.100.0-linux-amd64.tar.gz | tar -xzv
-sudo mv doctl /usr/local/bin
-```
-
-**Windows:**
-```bash
-# Через Chocolatey
-choco install doctl
-
-# Через Scoop
-scoop install doctl
-```
-
-### 2. Аутентификация doctl
-
-```bash
-doctl auth init
-```
-
-Вставьте ваш персональный токен DigitalOcean.
-
-**Проверка:**
-```bash
-doctl auth list
-doctl account get
-```
-
-### 3. Клонирование проекта
+### 1. Clone the Project
 
 ```bash
 git clone https://github.com/nikitagorelovwlnx/wlnx-cloud-deploy.git
 cd wlnx-cloud-deploy
 ```
 
-### 4. Настройка переменных окружения
+### 2. Configure Secrets
+
+Edit the secrets configuration file:
 
 ```bash
-# Создать файл окружения из шаблона
-cp .env.template .env
-
-# Отредактировать переменные
-nano .env  # или в любом редакторе
+# Edit the secrets file
+nano gcp-config/secrets.yaml
 ```
 
-**Обязательные переменные:**
+**Required variables:**
 
-```bash
-# Telegram Bot Token (от @BotFather)
-TELEGRAM_BOT_TOKEN=1234567890:ABCDEFghijklmnopqrstuvwxyz1234567890
-
-# JWT Secret (сгенерировать случайную строку)
-JWT_SECRET=$(openssl rand -base64 32)
-
-# API Secret Key (сгенерировать случайную строку)
-API_SECRET_KEY=$(openssl rand -base64 32)
-
-# Telegram Webhook Secret (сгенерировать случайную строку)
-TELEGRAM_WEBHOOK_SECRET=$(openssl rand -base64 32)
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: wlnx-secrets
+type: Opaque
+stringData:
+  # Telegram Bot Token (from @BotFather)
+  telegram-bot-token: "1234567890:ABCDEFghijklmnopqrstuvwxyz1234567890"
+  
+  # JWT Secret (generate random string)
+  jwt-secret: "YOUR_JWT_SECRET_HERE"
+  
+  # API Secret Key (generate random string)
+  api-secret-key: "YOUR_API_SECRET_HERE"
+  
+  # Telegram Webhook Secret (generate random string)
+  telegram-webhook-secret: "YOUR_WEBHOOK_SECRET_HERE"
+  
+  # Database connection string
+  database-url: "postgresql://username:password@/database?host=/cloudsql/PROJECT_ID:REGION:INSTANCE_NAME"
 ```
 
-**Генерация секретов:**
+**Generate secrets:**
 ```bash
-# Автоматическая генерация всех секретов
+# Auto-generate all secrets
 echo "JWT_SECRET=$(openssl rand -base64 32)"
 echo "API_SECRET_KEY=$(openssl rand -base64 32)"
 echo "TELEGRAM_WEBHOOK_SECRET=$(openssl rand -base64 32)"
 ```
 
-## 🚀 Процесс развёртывания
-
-### Шаг 1: Валидация конфигурации
+### 3. Validate Configuration
 
 ```bash
-# Проверить корректность YAML спецификации
-doctl apps spec validate --spec do-app.yaml
+# Check required files exist
+ls docker/
+ls gcp-config/
+
+# Validate YAML syntax
+for file in gcp-config/*.yaml; do 
+  echo "Checking $file"
+  python3 -c "import yaml,sys; yaml.safe_load(open('$file'))"
+done
 ```
 
-Если есть ошибки - исправьте их в `do-app.yaml`.
+## 🚀 Deployment Process
 
-### Шаг 2: Создание базы данных (опционально)
-
-Если нужна отдельная управляемая БД:
+### Step 1: Enable Google Cloud Services
 
 ```bash
-# Создать PostgreSQL кластер
-doctl databases create wlnx-pg \
-  --engine pg \
-  --version 15 \
-  --region fra \
-  --size db-s-1vcpu-1gb \
-  --num-nodes 1
+# Enable required APIs
+gcloud services enable \
+  run.googleapis.com \
+  cloudbuild.googleapis.com \
+  containerregistry.googleapis.com \
+  sql-component.googleapis.com
 ```
 
-### Шаг 3: Развёртывание приложения
+### Step 2: Create Cloud SQL Database (Optional)
+
+If you need a managed database:
 
 ```bash
-# Автоматический деплой
+# Create PostgreSQL instance
+gcloud sql instances create wlnx-postgres \
+  --database-version=POSTGRES_15 \
+  --tier=db-f1-micro \
+  --region=europe-west1 \
+  --storage-type=SSD \
+  --storage-size=10GB
+
+# Create database
+gcloud sql databases create wlnx --instance=wlnx-postgres
+```
+
+### Step 3: Deploy Application
+
+```bash
+# Automated deployment
 ./scripts/deploy.sh
 ```
 
-**Что происходит:**
-1. ✅ Проверка зависимостей
-2. ✅ Валидация конфигурации  
-3. ✅ Создание приложения в DO
-4. ✅ Настройка компонентов
-5. ✅ Сборка и деплой
-6. ✅ Настройка маршрутизации
-7. ✅ Выдача SSL сертификатов
+**What happens:**
+1. ✅ Check dependencies and configuration
+2. ✅ Enable required Google Cloud services  
+3. ✅ Build and push Docker images to GCR
+4. ✅ Deploy services to Cloud Run
+5. ✅ Configure auto-scaling
+6. ✅ Setup HTTPS and routing
+7. ✅ Display service URLs
 
-### Шаг 4: Настройка переменных в веб-интерфейсе
-
-1. Откройте [Apps в DigitalOcean](https://cloud.digitalocean.com/apps)
-2. Найдите ваше приложение "wlnx"
-3. Перейдите в "Settings" → "App-Level Environment Variables"
-4. Установите секретные переменные:
-
-| Переменная | Значение | Тип |
-|------------|----------|-----|
-| `TELEGRAM_BOT_TOKEN` | Ваш токен от BotFather | Encrypted |
-| `JWT_SECRET` | Сгенерированный секрет | Encrypted |
-| `API_SECRET_KEY` | Сгенерированный ключ | Encrypted |
-| `TELEGRAM_WEBHOOK_SECRET` | Сгенерированный секрет | Encrypted |
-
-5. Сохраните изменения
-
-### Шаг 5: Проверка развёртывания
+### Step 4: Apply Secrets Configuration
 
 ```bash
-# Проверить статус
+# Apply secrets to the cluster
+kubectl apply -f gcp-config/secrets.yaml
+
+# Verify secrets were created
+kubectl get secrets
+```
+
+### Step 5: Verify Deployment
+
+```bash
+# Check services status
 ./scripts/manage.sh status
 
-# Посмотреть логи
-./scripts/manage.sh logs api-server run
-./scripts/manage.sh logs telegram-bot run
-./scripts/manage.sh logs control-panel run
+# View service logs
+./scripts/manage.sh logs wlnx-api-server 50
+./scripts/manage.sh logs wlnx-telegram-bot 50
+./scripts/manage.sh logs wlnx-control-panel 50
+
+# Get service URLs
+gcloud run services list --region=europe-west1
 ```
 
 ## 🔧 Настройка после развёртывания

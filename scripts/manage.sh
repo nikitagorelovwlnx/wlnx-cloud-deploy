@@ -1,9 +1,13 @@
 #!/bin/bash
 
 # WLNX Management Script
-# Application management on DigitalOcean App Platform
+# Application management on Google Cloud Run
 
 set -e
+
+# Configuration
+REGION="europe-west1"
+SERVICES=("wlnx-api-server" "wlnx-control-panel" "wlnx-telegram-bot")
 
 # Colors for output
 RED='\033[0;31m'
@@ -28,216 +32,296 @@ warning() {
     echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
-# Check App ID
-check_app_id() {
-    if [[ ! -f ".app-id" ]]; then
-        error "Application ID not found. Deploy first."
+# Check if gcloud is configured
+check_gcloud() {
+    if ! command -v gcloud &> /dev/null; then
+        error "gcloud CLI is not installed"
         exit 1
     fi
     
-    APP_ID=$(cat .app-id)
+    if ! gcloud auth list --filter="status:ACTIVE" --format="value(account)" | head -n1 &> /dev/null; then
+        error "gcloud is not authenticated. Run: gcloud auth login"
+        exit 1
+    fi
+    
+    PROJECT_ID=$(gcloud config get-value project 2>/dev/null)
+    if [[ -z "$PROJECT_ID" ]]; then
+        error "No project set. Run: gcloud config set project YOUR_PROJECT_ID"
+        exit 1
+    fi
 }
 
-# Show application status
+# Show services status
 show_status() {
-    log "Getting application status..."
-    
-    echo "📊 General information:"
-    doctl apps get "$APP_ID" --format Name,Phase,LiveURL,CreatedAt
+    log "Getting services status..."
+    check_gcloud
     
     echo ""
-    echo "🔄 Recent deployments:"
-    doctl apps list-deployments "$APP_ID" --format ID,Phase,CreatedAt | head -6
+    echo "🚀 Services Status:"
+    for service in "${SERVICES[@]}"; do
+        echo -n "  $service: "
+        status=$(gcloud run services describe "$service" --region="$REGION" --format="value(status.conditions[0].type)" 2>/dev/null || echo "Not Found")
+        if [[ "$status" == "Ready" ]]; then
+            echo -e "${GREEN}Running${NC}"
+        else
+            echo -e "${RED}$status${NC}"
+        fi
+    done
     
     echo ""
-    echo "🏗️ Application components:"
-    doctl apps get "$APP_ID" --format Services,Workers,StaticSites
+    echo "🌐 Service URLs:"
+    for service in "${SERVICES[@]}"; do
+        url=$(gcloud run services describe "$service" --region="$REGION" --format="value(status.url)" 2>/dev/null || echo "Not deployed")
+        echo "  $service: $url"
+    done
+    
+    echo ""
+    echo "💾 Cloud SQL Status:"
+    gcloud sql instances list --format="table(name,databaseVersion,state,ipAddresses[0].ipAddress)" 2>/dev/null || echo "No databases found"
 }
 
 # Show logs
 show_logs() {
-    local component="$1"
-    local type="$2"
+    local service="$1"
+    local lines="${2:-50}"
     
-    if [[ -z "$component" ]]; then
-        echo "Available components:"
-        echo "  api-server      API server"
-        echo "  control-panel   Control panel"
-        echo "  telegram-bot    Telegram bot"
+    if [[ -z "$service" ]]; then
+        echo "Available services:"
+        echo "  wlnx-api-server      API server"
+        echo "  wlnx-control-panel   Control panel"
+        echo "  wlnx-telegram-bot    Telegram bot"
         echo ""
-        echo -n "Select component: "
-        read -r component
+        echo -n "Select service: "
+        read -r service
     fi
     
-    if [[ -z "$type" ]]; then
-        echo "Available log types:"
-        echo "  build    Build logs"
-        echo "  deploy   Deploy logs"
-        echo "  run      Runtime logs"
-        echo ""
-        echo -n "Select type (default run): "
-        read -r type
-        type=${type:-run}
+    if [[ -z "$lines" ]]; then
+        echo -n "Number of lines (default 50): "
+        read -r lines
+        lines=${lines:-50}
     fi
     
-    log "Getting $type logs for component $component..."
-    doctl apps logs "$APP_ID" "$component" --type "$type" --follow
+    check_gcloud
+    
+    log "Showing logs for $service (last $lines lines)..."
+    gcloud run services logs read "$service" --region="$REGION" --limit="$lines"
 }
 
-# Scaling
-scale_component() {
-    local component="$1"
-    local instances="$2"
+# Scale services
+scale_service() {
+    local service="$1"
+    local min_instances="$2"
+    local max_instances="${3:-$2}"
     
-    if [[ -z "$component" ]]; then
-        echo "Available components for scaling:"
-        echo "  api-server      API server"
-        echo "  control-panel   Control panel"
+    if [[ -z "$service" ]]; then
+        echo "Available services:"
+        echo "  wlnx-api-server      API server"
+        echo "  wlnx-control-panel   Control panel"
+        echo "  wlnx-telegram-bot    Telegram bot"
         echo ""
-        echo -n "Select component: "
-        read -r component
+        echo -n "Select service: "
+        read -r service
     fi
     
-    if [[ -z "$instances" ]]; then
-        echo -n "Enter number of instances: "
-        read -r instances
+    if [[ -z "$min_instances" ]]; then
+        echo -n "Enter minimum instances: "
+        read -r min_instances
     fi
     
-    if ! [[ "$instances" =~ ^[0-9]+$ ]] || [[ "$instances" -lt 1 ]] || [[ "$instances" -gt 10 ]]; then
-        error "Instance count must be between 1 and 10"
+    if [[ -z "$max_instances" ]] || [[ "$max_instances" == "$min_instances" ]]; then
+        echo -n "Enter maximum instances (default: $min_instances): "
+        read -r max_instances
+        max_instances=${max_instances:-$min_instances}
+    fi
+    
+    if ! [[ "$min_instances" =~ ^[0-9]+$ ]] || [[ "$min_instances" -lt 0 ]] || [[ "$min_instances" -gt 100 ]]; then
+        error "Minimum instance count must be between 0 and 100"
         exit 1
     fi
     
-    warning "Changing instance count requires updating application specification"
-    echo "Edit do-app.yaml and run deployment again"
+    check_gcloud
     
-    # TODO: Automatic YAML update and deploy
+    log "Scaling $service to min: $min_instances, max: $max_instances instances..."
+    
+    gcloud run services update "$service" \
+        --region="$REGION" \
+        --min-instances="$min_instances" \
+        --max-instances="$max_instances"
+    
+    success "Service $service scaled successfully"
 }
 
 # Environment variables management
 manage_env() {
     local action="$1"
-    local component="$2"
+    local service="$2"
     local key="$3"
     local value="$4"
     
+    check_gcloud
+    
     case "$action" in
         "list")
-            log "Environment variables for component $component:"
-            # doctl apps get doesn't show variables directly
-            # Show what's in specification
-            echo "Check variables in do-app.yaml file"
+            log "Environment variables for service $service:"
+            gcloud run services describe "$service" --region="$REGION" --format="value(spec.template.spec.containers[0].env[].name,spec.template.spec.containers[0].env[].value)"
             ;;
         "set")
-            warning "Changing environment variables requires updating specification"
-            echo "Edit do-app.yaml and run deployment again"
+            if [[ -z "$key" ]] || [[ -z "$value" ]]; then
+                error "Usage: manage_env set SERVICE KEY VALUE"
+                exit 1
+            fi
+            log "Setting $key for service $service..."
+            gcloud run services update "$service" --region="$REGION" --set-env-vars="$key=$value"
+            success "Environment variable $key updated"
             ;;
         *)
             echo "Environment variable actions:"
-            echo "  list COMPONENT      Show variables"
-            echo "  set COMPONENT KEY VALUE  Set variable"
+            echo "  list SERVICE           Show variables"
+            echo "  set SERVICE KEY VALUE  Set variable"
             ;;
     esac
 }
 
 # Resource monitoring
 show_metrics() {
-    log "📈 Application metrics"
-    warning "Detailed metrics available in DigitalOcean web interface"
+    check_gcloud
     
-    # Show basic information
-    doctl apps get "$APP_ID" --format Name,Phase,Region,TierSlug
+    log "📈 Service metrics"
+    
+    PROJECT_ID=$(gcloud config get-value project)
     
     echo ""
-    echo "🌐 For detailed metrics open:"
-    echo "https://cloud.digitalocean.com/apps/$APP_ID/overview"
+    echo "📊 Performance Metrics:"
+    for service in "${SERVICES[@]}"; do
+        echo "  $service:"
+        echo "    Metrics: https://console.cloud.google.com/run/detail/$REGION/$service/metrics?project=$PROJECT_ID"
+        echo "    Logs: https://console.cloud.google.com/run/detail/$REGION/$service/logs?project=$PROJECT_ID"
+    done
+    
+    echo ""
+    echo "💰 Billing Information:"
+    echo "Visit: https://console.cloud.google.com/billing?project=$PROJECT_ID"
 }
 
 # Database backup
 backup_database() {
-    log "💾 Creating database backup..."
+    check_gcloud
     
-    # Get database list
-    DB_LIST=$(doctl databases list --format Name,Engine --no-header | grep "wlnx")
+    log "💾 Creating Cloud SQL backup..."
     
-    if [[ -z "$DB_LIST" ]]; then
-        warning "WLNX database not found"
+    # Get instances list
+    instances=$(gcloud sql instances list --format="value(name)" 2>/dev/null)
+    
+    if [[ -z "$instances" ]]; then
+        warning "No Cloud SQL instances found"
         return
     fi
     
-    echo "$DB_LIST"
+    echo "Available instances:"
+    echo "$instances"
     echo ""
-    echo -n "Enter database name: "
-    read -r db_name
+    echo -n "Enter instance name (or press Enter for all): "
+    read -r instance_name
     
-    # Create backup
-    timestamp=$(date +"%Y%m%d_%H%M%S")
-    backup_name="wlnx_backup_$timestamp"
+    if [[ -z "$instance_name" ]]; then
+        # Backup all instances
+        for instance in $instances; do
+            log "Creating backup for instance: $instance"
+            backup_id="wlnx-backup-$(date +%Y%m%d-%H%M%S)"
+            gcloud sql backups create --instance="$instance" --description="Manual backup $backup_id"
+            success "Backup created for instance: $instance"
+        done
+    else
+        # Backup specific instance
+        log "Creating backup for instance: $instance_name"
+        backup_id="wlnx-backup-$(date +%Y%m%d-%H%M%S)"
+        gcloud sql backups create --instance="$instance_name" --description="Manual backup $backup_id"
+        success "Backup created for instance: $instance_name"
+    fi
+}
+
+# Restart service
+restart_service() {
+    local service="$1"
     
-    doctl databases backups create "$db_name" --name "$backup_name"
-    success "Backup '$backup_name' created"
+    if [[ -z "$service" ]]; then
+        echo "Available services:"
+        echo "  wlnx-api-server      API server"
+        echo "  wlnx-control-panel   Control panel"
+        echo "  wlnx-telegram-bot    Telegram bot"
+        echo ""
+        echo -n "Select service: "
+        read -r service
+    fi
+    
+    check_gcloud
+    
+    log "Restarting $service..."
+    
+    # Force a new revision by updating with current time annotation
+    gcloud run services update "$service" \
+        --region="$REGION" \
+        --update-annotations="restart.time=$(date +%s)"
+    
+    success "Service $service restarted"
 }
 
 # Show help
 show_help() {
-    echo "🚀 WLNX Management Tool"
+    echo "🚀 WLNX Management Tool for Google Cloud Run"
     echo ""
     echo "Usage: $0 COMMAND [OPTIONS]"
     echo ""
     echo "Management commands:"
-    echo "  status                 Show application status"
-    echo "  logs [COMPONENT] [TYPE] Show component logs"
-    echo "  scale COMPONENT COUNT  Scale component"
-    echo "  env ACTION [ARGS]      Manage environment variables"
-    echo "  metrics               Show metrics"
-    echo "  backup                Create database backup"
-    echo "  restart               Restart application"
-    echo "  delete                Delete application"
+    echo "  status                           Show services status"
+    echo "  logs [SERVICE] [LINES]          Show service logs (default: 50 lines)"
+    echo "  scale SERVICE MIN [MAX]         Scale service instances"
+    echo "  env ACTION [ARGS]               Manage environment variables"
+    echo "  metrics                         Show performance metrics URLs"
+    echo "  backup                          Create Cloud SQL backup"
+    echo "  restart [SERVICE]               Restart a service"
+    echo "  help                            Show this help"
+    echo ""
+    echo "Services:"
+    echo "  wlnx-api-server                 API Server service"
+    echo "  wlnx-control-panel              Control Panel service"
+    echo "  wlnx-telegram-bot               Telegram Bot service"
     echo ""
     echo "Examples:"
     echo "  $0 status"
-    echo "  $0 logs api-server run"
-    echo "  $0 scale api-server 3"
-    echo "  $0 env list api-server"
-    echo "  $0 metrics"
+    echo "  $0 logs wlnx-api-server 100"
+    echo "  $0 scale wlnx-api-server 2 5"
+    echo "  $0 env list wlnx-api-server"
+    echo "  $0 restart wlnx-telegram-bot"
     echo "  $0 backup"
 }
 
-# Restart application
-restart_app() {
-    warning "Application restart is performed through re-deployment"
-    echo -n "Continue? (y/N): "
-    read -r confirm
+# Delete services
+delete_services() {
+    check_gcloud
     
-    if [[ "$confirm" =~ ^[Yy]$ ]]; then
-        log "Performing re-deployment..."
-        ./scripts/deploy.sh
-    else
-        log "Restart cancelled"
-    fi
-}
-
-# Delete application
-delete_app() {
-    warning "⚠️  WARNING: This action will delete the entire application!"
+    warning "⚠️  WARNING: This action will delete all WLNX services!"
     echo "Will be deleted:"
-    echo "  - All services and workers"
-    echo "  - All deployments and their history"
-    echo "  - All application settings"
+    echo "  - All Cloud Run services"
+    echo "  - All service revisions and history"
     echo ""
-    echo "Database will remain, it needs to be deleted separately."
+    echo "Cloud SQL databases will remain and need to be deleted separately."
     echo ""
     echo -n "Are you sure? Type 'DELETE' to confirm: "
     read -r confirmation
     
     if [[ "$confirmation" == "DELETE" ]]; then
-        log "Deleting application..."
-        doctl apps delete "$APP_ID" --force
+        log "Deleting services..."
+        for service in "${SERVICES[@]}"; do
+            if gcloud run services describe "$service" --region="$REGION" >/dev/null 2>&1; then
+                log "Deleting service: $service"
+                gcloud run services delete "$service" --region="$REGION" --quiet
+            else
+                warning "Service $service not found, skipping"
+            fi
+        done
         
-        # Remove local ID file
-        rm -f .app-id
-        
-        success "Application deleted"
+        success "All services deleted"
     else
         log "Deletion cancelled"
     fi
@@ -252,18 +336,11 @@ main() {
         exit 1
     fi
     
-    # Commands that don't require App ID check
     case "$command" in
         "help"|"-h"|"--help")
             show_help
             exit 0
             ;;
-    esac
-    
-    # For all other commands App ID is required
-    check_app_id
-    
-    case "$command" in
         "status")
             show_status
             ;;
@@ -271,7 +348,7 @@ main() {
             show_logs "$2" "$3"
             ;;
         "scale")
-            scale_component "$2" "$3"
+            scale_service "$2" "$3" "$4"
             ;;
         "env")
             manage_env "$2" "$3" "$4" "$5"
@@ -283,10 +360,10 @@ main() {
             backup_database
             ;;
         "restart")
-            restart_app
+            restart_service "$2"
             ;;
         "delete")
-            delete_app
+            delete_services
             ;;
         *)
             error "Unknown command: $command"
