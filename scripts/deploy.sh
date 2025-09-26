@@ -147,26 +147,28 @@ build_and_push_images() {
     
     PROJECT_ID=$(gcloud config get-value project)
     
-    # Configure Docker to use gcloud as credential helper
-    gcloud auth configure-docker --quiet
+    # Configure Docker authentication for Artifact Registry
+    log "Configuring Docker authentication..."
+    TOKEN=$(gcloud auth print-access-token)
+    echo $TOKEN | docker login -u oauth2accesstoken --password-stdin europe-west1-docker.pkg.dev
     
     # Build and push API Server
     log "Building API Server image..."
     cd ../wlnx-api-server || { error "wlnx-api-server directory not found"; exit 1; }
-    docker build -f ../wlnx-cloud-deploy/docker/api-server.Dockerfile -t "gcr.io/${PROJECT_ID}/wlnx-api-server:latest" .
-    docker push "gcr.io/${PROJECT_ID}/wlnx-api-server:latest"
+    docker build -f ../wlnx-cloud-deploy/docker/api-server.Dockerfile -t "europe-west1-docker.pkg.dev/${PROJECT_ID}/wlnx-docker-repo/wlnx-api-server:latest" .
+    docker push "europe-west1-docker.pkg.dev/${PROJECT_ID}/wlnx-docker-repo/wlnx-api-server:latest"
     
     # Build and push Control Panel
     log "Building Control Panel image..."
     cd ../wlnx-control-panel || { error "wlnx-control-panel directory not found"; exit 1; }
-    docker build -f ../wlnx-cloud-deploy/docker/control-panel.Dockerfile -t "gcr.io/${PROJECT_ID}/wlnx-control-panel:latest" .
-    docker push "gcr.io/${PROJECT_ID}/wlnx-control-panel:latest"
+    docker build -f ../wlnx-cloud-deploy/docker/control-panel.Dockerfile -t "europe-west1-docker.pkg.dev/${PROJECT_ID}/wlnx-docker-repo/wlnx-control-panel:latest" .
+    docker push "europe-west1-docker.pkg.dev/${PROJECT_ID}/wlnx-docker-repo/wlnx-control-panel:latest"
     
     # Build and push Telegram Bot
     log "Building Telegram Bot image..."
     cd ../wlnx-telegram-bot || { error "wlnx-telegram-bot directory not found"; exit 1; }
-    docker build -f ../wlnx-cloud-deploy/docker/telegram-bot.Dockerfile -t "gcr.io/${PROJECT_ID}/wlnx-telegram-bot:latest" .
-    docker push "gcr.io/${PROJECT_ID}/wlnx-telegram-bot:latest"
+    docker build -f ../wlnx-cloud-deploy/docker/telegram-bot.Dockerfile -t "europe-west1-docker.pkg.dev/${PROJECT_ID}/wlnx-docker-repo/wlnx-telegram-bot:latest" .
+    docker push "europe-west1-docker.pkg.dev/${PROJECT_ID}/wlnx-docker-repo/wlnx-telegram-bot:latest"
     
     # Return to original directory
     cd ../wlnx-cloud-deploy
@@ -184,9 +186,8 @@ deploy_services() {
     log "Updating configuration files with project ID..."
     sed -i.bak "s/PROJECT_ID/${PROJECT_ID}/g" gcp-config/*.yaml
     
-    # Apply secrets first
-    log "Creating secrets..."
-    kubectl apply -f gcp-config/secrets.yaml
+    # Skip secrets creation - using direct environment variables in service configs
+    log "Skipping secrets creation - using direct environment variables"
     
     # Deploy API Server
     log "Deploying API Server..."

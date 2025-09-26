@@ -2,9 +2,10 @@ apiVersion: serving.knative.dev/v1
 kind: Service
 metadata:
   name: wlnx-control-panel
-  namespace: wlnx-473304
+  namespace: default
   annotations:
     run.googleapis.com/ingress: all
+    run.googleapis.com/execution-environment: gen2
 spec:
   template:
     metadata:
@@ -12,11 +13,8 @@ spec:
         autoscaling.knative.dev/maxScale: "1"
         autoscaling.knative.dev/minScale: "0"
         run.googleapis.com/cpu-throttling: "true"
-        run.googleapis.com/memory: "512Mi"
-        run.googleapis.com/cpu: "1000m"
-        run.googleapis.com/execution-environment: gen2
     spec:
-      containerConcurrency: 1
+      containerConcurrency: 10
       timeoutSeconds: 300
       containers:
       - name: control-panel
@@ -27,6 +25,8 @@ spec:
         env:
         - name: NODE_ENV
           value: "production"
+        - name: PORT
+          value: "3000"
         - name: REACT_APP_API_URL
           value: "https://wlnx-api-server-wlnx-473304.a.run.app/api"
         - name: API_BASE_URL
@@ -37,11 +37,17 @@ spec:
           value: "true"
         resources:
           limits:
-            cpu: "1000m"
-            memory: "512Mi"
+            cpu: "200m"
+            memory: "128Mi"
         livenessProbe:
           httpGet:
             path: /
             port: 3000
           initialDelaySeconds: 30
           periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5

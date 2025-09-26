@@ -2,9 +2,10 @@ apiVersion: serving.knative.dev/v1
 kind: Service
 metadata:
   name: wlnx-telegram-bot
-  namespace: wlnx-473304
+  namespace: default
   annotations:
     run.googleapis.com/ingress: internal
+    run.googleapis.com/execution-environment: gen2
 spec:
   template:
     metadata:
@@ -12,11 +13,10 @@ spec:
         autoscaling.knative.dev/maxScale: "1"
         autoscaling.knative.dev/minScale: "0"
         run.googleapis.com/cpu-throttling: "true"
-        run.googleapis.com/memory: "512Mi"
-        run.googleapis.com/cpu: "1000m"
-        run.googleapis.com/execution-environment: gen2
+        run.googleapis.com/memory: "128Mi"
+        run.googleapis.com/cpu: "200m"
     spec:
-      containerConcurrency: 1
+      containerConcurrency: 10
       timeoutSeconds: 300
       containers:
       - name: telegram-bot
@@ -27,6 +27,8 @@ spec:
         env:
         - name: NODE_ENV
           value: "production"
+        - name: PORT
+          value: "8080"
         - name: DATABASE_URL
           value: "postgresql://wlnx_user:wlnx_password_2024@/wlnx?host=/cloudsql/wlnx-473304:europe-west1:wlnx-postgres"
         - name: TELEGRAM_BOT_TOKEN
@@ -37,5 +39,5 @@ spec:
           value: "https://wlnx-api-server-wlnx-473304.a.run.app/api/webhook/telegram"
         resources:
           limits:
-            cpu: "1000m"
-            memory: "512Mi"
+            cpu: "200m"
+            memory: "128Mi"
