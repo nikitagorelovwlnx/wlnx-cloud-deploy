@@ -1,5 +1,5 @@
 # Control Panel Dockerfile for Google Cloud Run
-FROM node:18-alpine AS builder
+FROM node:18-alpine
 
 # Set working directory
 WORKDIR /app
@@ -7,8 +7,8 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci
+# Install all dependencies and live-server globally
+RUN npm install && npm install -g live-server && npm cache clean --force
 
 # Copy source code
 COPY . .
@@ -16,22 +16,8 @@ COPY . .
 # Build the TypeScript application
 RUN npm run build
 
-# Production image
-FROM node:18-alpine AS runner
-
-# Set working directory
-WORKDIR /app
-
-# Copy package files
-COPY package*.json ./
-
-# Install only production dependencies
-RUN npm ci --only=production && npm cache clean --force
-
-# Copy built application and static files
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/index.html ./
-COPY --from=builder /app/package.json ./package.json
+# Remove dev dependencies
+RUN npm prune --production
 
 # Create non-root user
 RUN addgroup -g 1001 -S nodejs && \
